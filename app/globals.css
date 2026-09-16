@@ -1,0 +1,245 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+/* ── Theme tokens ────────────────────────────────────────────────────────
+   The accent is a CSS variable so it can be swapped at runtime by the theme
+   picker. Values are space-separated RGB channels so Tailwind's
+   <alpha-value> syntax keeps working (e.g. bg-accent/10).
+   ─────────────────────────────────────────────────────────────────────── */
+:root {
+  color-scheme: light;
+
+  --accent: 232 32 60;        /* crimson */
+  --accent-ink: 180 20 44;    /* darker, for text on light fills */
+  --accent-wash: 255 241 243; /* tinted background */
+
+  --page: 244 246 250;
+  --card: 255 255 255;
+  --line: 232 236 243;
+  --line-strong: 212 219 232;
+
+  --ink: 26 34 51;
+  --ink-2: 90 103 132;
+  --ink-3: 139 150 173;
+}
+
+* {
+  -webkit-font-smoothing: antialiased;
+}
+
+body {
+  background-color: rgb(var(--page));
+  color: rgb(var(--ink));
+}
+
+/* ── Card ────────────────────────────────────────────────────────────────
+   Replaces the old perforated ticket: rounded, white, soft lift.
+   ─────────────────────────────────────────────────────────────────────── */
+.ticket {
+  position: relative;
+  background: rgb(var(--card));
+  border: 1px solid rgb(var(--line));
+  border-radius: 14px;
+  box-shadow:
+    0 1px 2px rgba(26, 34, 51, 0.04),
+    0 8px 24px -16px rgba(26, 34, 51, 0.22);
+}
+
+/* The notches belonged to the old ticket metaphor. */
+.ticket::before,
+.ticket::after { display: none; }
+
+.ticket-tear {
+  border-top: 1px solid rgb(var(--line));
+}
+
+/* ── Notice card: coloured rail down the left edge ───────────────────── */
+.notice {
+  background: rgb(var(--card));
+  border: 1px solid rgb(var(--line));
+  border-left: 4px solid currentColor;
+  border-radius: 12px;
+}
+.notice-warn { background: #FFFCF0; border-color: #F2E4C0; border-left-color: #E0A020; }
+.notice-info { border-left-color: #7C4DFF; }
+.notice-bad  { background: #FFF5F6; border-color: #F7D9DE; border-left-color: rgb(var(--accent)); }
+
+/* ── Backdrop ────────────────────────────────────────────────────────── */
+.blueprint-grid {
+  background-image:
+    linear-gradient(rgba(139, 150, 173, 0.07) 1px, transparent 1px),
+    linear-gradient(90deg, rgba(139, 150, 173, 0.07) 1px, transparent 1px);
+  background-size: 28px 28px;
+}
+
+/* ── Tabs ────────────────────────────────────────────────────────────── */
+.tabbar {
+  background: rgb(var(--card));
+  border: 1px solid rgb(var(--line));
+  border-radius: 14px;
+  box-shadow: 0 1px 2px rgba(26, 34, 51, 0.04);
+}
+.tab {
+  position: relative;
+  white-space: nowrap;
+  border-radius: 10px;
+  transition: color .15s, background .15s;
+}
+.tab[data-active="true"] {
+  color: rgb(var(--accent-ink));
+  background: rgb(var(--accent-wash));
+}
+.tab[data-active="false"]:hover {
+  background: rgb(var(--page));
+}
+
+/* ---- Tracking number chip ---- */
+.track-chip {
+  font-family: var(--font-mono), monospace;
+  letter-spacing: 0.03em;
+}
+
+/* ---- Barcode flourish (decorative, css-only) ---- */
+.barcode {
+  background-image: repeating-linear-gradient(
+    90deg,
+    currentColor 0px,
+    currentColor 2px,
+    transparent 2px,
+    transparent 3px,
+    currentColor 3px,
+    currentColor 4px,
+    transparent 4px,
+    transparent 7px,
+    currentColor 7px,
+    currentColor 8px,
+    transparent 8px,
+    transparent 11px
+  );
+  opacity: 0.35;
+}
+
+/* ---- Scrollbar ---- */
+::-webkit-scrollbar { width: 8px; height: 8px; }
+::-webkit-scrollbar-track { background: transparent; }
+::-webkit-scrollbar-thumb { background: rgba(139, 150, 173, 0.45); border-radius: 4px; }
+
+/* ---- Mobile affordances ---- */
+/* Wide tables inside tickets scroll horizontally with momentum + a fade hint
+   on the right edge so it's obvious there's more to see. */
+.ticket .overflow-x-auto,
+.overflow-x-auto {
+  -webkit-overflow-scrolling: touch;
+  overscroll-behavior-x: contain;
+}
+
+@media (max-width: 640px) {
+  .scroll-hint {
+    position: relative;
+  }
+  .scroll-hint::after {
+    content: "";
+    position: absolute;
+    top: 0;
+    right: 0;
+    bottom: 0;
+    width: 26px;
+    pointer-events: none;
+    background: linear-gradient(90deg, transparent, rgb(var(--card)) 70%);
+  }
+}
+
+/* Comfortable tap targets on touch devices */
+@media (pointer: coarse) {
+  button,
+  select,
+  [role="button"] {
+    min-height: 40px;
+  }
+}
+
+/* Respect notches / home indicators */
+body {
+  padding-left: env(safe-area-inset-left);
+  padding-right: env(safe-area-inset-right);
+}
+
+/* ---- Motion ---- */
+@media (prefers-reduced-motion: no-preference) {
+  .fade-up {
+    animation: fadeUp 0.5s cubic-bezier(0.2, 0.7, 0.2, 1) both;
+  }
+}
+@keyframes fadeUp {
+  from { opacity: 0; transform: translateY(10px); }
+  to { opacity: 1; transform: translateY(0); }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  * { animation: none !important; transition: none !important; }
+}
+
+/* ---- Print / PDF export ---- */
+@media print {
+  @page { size: A4; margin: 12mm; }
+
+  body {
+    background: #fff !important;
+    background-image: none !important;
+    color: #14202E !important;
+  }
+
+  .no-print { display: none !important; }
+
+  .blueprint-grid { background-image: none !important; }
+
+  .ticket {
+    background: #fff !important;
+    border: 1px solid #C9C2B0 !important;
+    box-shadow: none !important;
+    break-inside: avoid;
+    page-break-inside: avoid;
+    margin-bottom: 10px;
+  }
+  .ticket::before, .ticket::after { display: none !important; }
+
+  .fade-up { animation: none !important; }
+
+  /* force legible ink on paper */
+  .text-content-100, .text-content-100\/90, .text-content-100\/85, .text-content-100\/80 { color: #14202E !important; }
+  .text-content-300\/70, .text-content-300\/60, .text-content-300\/55,
+  .text-content-300\/50, .text-content-300\/45, .text-content-300\/40,
+  .text-content-300\/35, .text-content-300\/30 { color: #4A5769 !important; }
+  .text-accent { color: #7A5C1F !important; }
+
+  section { break-inside: avoid; }
+  table { font-size: 10pt !important; }
+  header { position: static !important; }
+}
+
+/* ── Form + button primitives ────────────────────────────────────────── */
+@layer components {
+  .input {
+    @apply w-full bg-surface-900 border border-surface-600 rounded-lg px-3 py-2
+           text-[13px] text-content-100 placeholder:text-content-300/40
+           focus:border-accent focus:outline-none;
+  }
+  .btn-soft {
+    @apply font-mono text-[11px] uppercase tracking-wider border border-surface-600
+           text-content-300 px-3 py-2 rounded-lg min-h-[36px]
+           hover:bg-surface-700 transition-colors;
+  }
+  .btn-accent {
+    @apply font-mono text-[11px] uppercase tracking-wider border border-accent
+           text-accent-ink bg-accent-wash px-3 py-2 rounded-lg min-h-[36px]
+           hover:bg-accent/15 transition-colors;
+  }
+  /* Clamp long scripts on the plan cards. */
+  .line-clamp-3 {
+    display: -webkit-box;
+    -webkit-line-clamp: 3;
+    -webkit-box-orient: vertical;
+    overflow: hidden;
+  }
+}

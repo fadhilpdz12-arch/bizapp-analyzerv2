@@ -1,0 +1,23 @@
+# Netlify reads this automatically — no need to fill in the build settings
+# by hand in the dashboard.
+#
+# IMPORTANT: this file must sit at the ROOT of the GitHub repository, in the
+# same folder as package.json. If the project is nested inside another folder
+# in the repo, either move it up or set "Base directory" in
+# Site configuration → Build & deploy.
+
+[build]
+  command = "npm run build"
+  # next.config.js uses output: "export", so the built site lands in out/,
+  # not .next/.
+  publish = "out"
+
+[build.environment]
+  NODE_VERSION = "20"
+
+# Static export emits real directories, so no SPA rewrite is needed. This
+# only catches unknown paths and shows the styled 404 page.
+[[redirects]]
+  from = "/*"
+  to = "/404.html"
+  status = 404
