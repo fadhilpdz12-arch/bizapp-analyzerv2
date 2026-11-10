@@ -31,6 +31,16 @@ function pct(n: number, d: number): number {
   return d === 0 ? 0 : Math.round((n / d) * 1000) / 10;
 }
 
+/** Latest scan event text without its timestamp, e.g. "Arrival Exception DC Kolombong". */
+function latestScanText(raw: string): string {
+  if (!raw || raw.trim() === "-") return "";
+  const segs = raw
+    .split(/\(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}\)/)
+    .map((x) => x.replace(/\(\s*\)/g, "").replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return (segs[segs.length - 1] || "").replace(/\.$/, "");
+}
+
 function fmtDate(d: Date): string {
   const y = d.getFullYear();
   const m = String(d.getMonth() + 1).padStart(2, "0");
@@ -403,52 +413,103 @@ export function computeAnalytics(allOrders: Order[]): Analytics {
     })
     .sort((a, b) => b.daysStalled - a.daysStalled);
 
-  // ═══════════ PARCEL ACTION BOARD (self collect / failed / out for delivery) ═══════════
+  // ═══════════ PARCEL ACTION BOARD — every pending parcel, one group each ═══════════
   // Read from each parcel's LATEST courier scan (set in the parser). These are
   // today's operational to-dos, distinct from the stalled-parcel risk list.
-  const today = new Date();
-  const daysSinceScan = (d: Date | null): number | null => {
+  const STUCK_DAYS = 3; // in transit with no new scan for this long = stuck
+  const NO_SCAN_DAYS = 2; // tracking generated but courier never scanned it
+  const NOT_SHIPPED_DAYS = 1; // order still has no tracking number
+  // "Today" = the newest courier scan in the export (capped at now), so an
+  // older file is judged as of when it was pulled, not as of opening it.
+  const now = Date.now();
+  const newestScan = orders.reduce((mx, o) => {
+    const t = o.lastScanDate?.getTime() ?? 0;
+    return t > mx && t <= now ? t : mx;
+  }, 0);
+  const today = new Date(newestScan || now);
+  const daysAgo = (d: Date | null): number | null => {
     if (!d) return null;
     const diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
     return diff >= 0 && diff <= 365 ? diff : null;
   };
-  const mkActionParcel = (o: Order): ActionParcel => ({
-    action: o.parcelAction as ActionParcel["action"],
-    trackingNo: o.trackingNo,
-    customerName: o.customerName,
-    phone: o.phone,
-    agent: o.agent,
-    product: o.product,
-    amount: o.amount,
-    courierProvider: o.courierProvider,
-    location: o.actionLocation || (o.region !== "Tidak Diketahui" ? o.region : ""),
-    failAttempts: o.failAttempts,
-    lastEventLabel: o.failReason || "—",
-    lastScanLabel: fmtShort(o.lastScanDate),
-    daysSince: daysSinceScan(o.lastScanDate),
-  });
+  const refDate = (o: Order): Date | null => {
+    if (o.parcelAction === "NO_SCAN") return o.courierGenerated ?? o.orderDate;
+    if (o.parcelAction === "NOT_SHIPPED") return o.orderDate;
+    return o.lastScanDate;
+  };
+  const finalAction = (o: Order): ActionParcel["action"] => {
+    const act = o.parcelAction as ActionParcel["action"];
+    if (act === "IN_TRANSIT") {
+      const d = daysAgo(o.lastScanDate);
+      if (d !== null && d >= STUCK_DAYS) return "STUCK";
+    }
+    return act;
+  };
+  const mkActionParcel = (o: Order): ActionParcel => {
+    const action = finalAction(o);
+    const daysSince = daysAgo(refDate(o));
+    const overdue =
+      (action === "NO_SCAN" && (daysSince ?? 0) >= NO_SCAN_DAYS) ||
+      (action === "NOT_SHIPPED" && (daysSince ?? 0) >= NOT_SHIPPED_DAYS);
+    return {
+      action,
+      trackingNo: o.trackingNo,
+      customerName: o.customerName,
+      phone: o.phone,
+      agent: o.agent,
+      product: o.product,
+      amount: o.amount,
+      courierProvider: o.courierProvider,
+      location: o.actionLocation || (o.region !== "Tidak Diketahui" ? o.region : ""),
+      failAttempts: o.failAttempts,
+      lastEventLabel: latestScanText(o.parcelStatusRaw) || "—",
+      lastScanLabel:
+        action === "NO_SCAN"
+          ? `tracking ${fmtShort(o.courierGenerated)}`
+          : action === "NOT_SHIPPED"
+          ? `order ${fmtShort(o.orderDate)}`
+          : fmtShort(o.lastScanDate),
+      daysSince,
+      overdue,
+    };
+  };
 
-  const selfCollect = orders
-    .filter((o) => o.parcelAction === "SELF_COLLECT")
-    .map(mkActionParcel)
-    // Longest-waiting first — these auto-return after a few days uncollected.
-    .sort((a, b) => (b.daysSince ?? 0) - (a.daysSince ?? 0));
-  const failedDelivery = orders
-    .filter((o) => o.parcelAction === "FAILED_DELIVERY")
-    .map(mkActionParcel)
-    // Most attempts first — the next failure usually triggers RTO.
-    .sort((a, b) => b.failAttempts - a.failAttempts || (b.daysSince ?? 0) - (a.daysSince ?? 0));
-  const outForDelivery = orders
-    .filter((o) => o.parcelAction === "OUT_FOR_DELIVERY")
-    .map(mkActionParcel)
-    // Freshest scan first — these should be moving today.
-    .sort((a, b) => (a.daysSince ?? 0) - (b.daysSince ?? 0));
+  const boardItems = orders.filter((o) => o.parcelAction !== null).map(mkActionParcel);
+  const byAction = (act: ActionParcel["action"]) => boardItems.filter((p) => p.action === act);
+  const oldestFirst = (x: ActionParcel, y: ActionParcel) => (y.daysSince ?? 0) - (x.daysSince ?? 0);
+
+  // Longest-waiting first — these auto-return after a few days uncollected.
+  const selfCollect = byAction("SELF_COLLECT").sort(oldestFirst);
+  // Most attempts first — the next failure usually triggers RTO.
+  const failedDelivery = byAction("FAILED_DELIVERY").sort(
+    (x, y) => y.failAttempts - x.failAttempts || oldestFirst(x, y)
+  );
+  const exception = byAction("EXCEPTION").sort(oldestFirst);
+  const stuck = byAction("STUCK").sort(oldestFirst);
+  const noScan = byAction("NO_SCAN").sort(oldestFirst);
+  const notShipped = byAction("NOT_SHIPPED").sort(oldestFirst);
+  // Freshest scan first — these should be moving today.
+  const outForDelivery = byAction("OUT_FOR_DELIVERY").sort((x, y) => (x.daysSince ?? 0) - (y.daysSince ?? 0));
+  const inTransit = byAction("IN_TRANSIT").sort(oldestFirst);
 
   const parcelActions: ParcelActionBoard = {
     selfCollect,
     failedDelivery,
+    exception,
+    stuck,
+    noScan,
+    notShipped,
     outForDelivery,
-    totalActionable: selfCollect.length + failedDelivery.length,
+    inTransit,
+    totalPending: boardItems.length,
+    totalActionable:
+      selfCollect.length +
+      failedDelivery.length +
+      exception.length +
+      stuck.length +
+      noScan.filter((p) => p.overdue).length +
+      notShipped.filter((p) => p.overdue).length,
+    stuckDays: STUCK_DAYS,
   };
 
   // ═══════════ MONTH MATURITY (guards against misleading MoM) ═══════════
@@ -598,6 +659,13 @@ export function computeAnalytics(allOrders: Order[]): Analytics {
       headline: `${parcelActions.selfCollect.length} parcel menunggu customer kutip sendiri`,
       detail: `Nilai RM${val.toLocaleString()}. Parcel yang tak dikutip dalam beberapa hari akan auto-return — WhatsApp customer dengan lokasi kutipan di tab Tindakan Parcel.`,
       tone: "amaran",
+    });
+  }
+  if (parcelActions.exception.length > 0) {
+    summary.push({
+      headline: `${parcelActions.exception.length} parcel ada masalah di pejabat kurier (exception)`,
+      detail: `Kurier tanda parcel ada isu (selalunya alamat/telefon). Parcel ni takkan bergerak sampai diselesaikan — semak dengan kurier & sahkan alamat customer.`,
+      tone: "bahaya",
     });
   }
   if (parcelActions.failedDelivery.length > 0) {

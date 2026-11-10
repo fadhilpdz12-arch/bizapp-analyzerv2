@@ -497,8 +497,7 @@ export default function Dashboard({
                 Tindakan Parcel Hari Ini
               </p>
               <p className="text-content-300/70 text-[13px] mb-4">
-                Dibaca terus dari scan kurier terkini: parcel yang menunggu kutipan sendiri
-                (dengan lokasi), gagal dihantar, dan yang sedang dalam penghantaran.
+                Semua parcel pending dikelaskan ikut scan kurier terkini, disusun ikut keutamaan tindakan admin.
               </p>
               <ParcelActionPanel board={a.parcelActions} />
             </section>

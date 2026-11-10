@@ -173,6 +173,12 @@ const FAILED_DELIVERY_RE =
 const OUT_FOR_DELIVERY_RE =
   /out\s+for\s+delivery|with\s+delivery\s+courier|on\s+vehicle\s+for\s+delivery|window\s+delivery\s+assigned|sedang\s+dihantar|keluar\s+untuk\s+penghantaran/i;
 
+// Courier-flagged problems. Pos Laju "Arrival Exception" means the parcel hit
+// a snag at that office (wrong/incomplete address, damaged, held) — it will
+// not move until someone sorts it out.
+const EXCEPTION_RE =
+  /\bexception\b|on\s+hold|\bheld\b|address\s+(?:issue|incorrect|incomplete|problem)|incorrect\s+address|alamat\s+(?:tidak|salah)|damaged|rosak|\bmissort|misroute|unable\s+to\s+(?:locate|contact)|tidak\s+dapat\s+dihubungi|problem\s+shipment/i;
+
 // Location inside self-collect prose, e.g. "Sila kutip di Pejabat Pos Presint 9"
 // or "Ready for collection at DP Kajang".
 const COLLECT_AT_RE =
@@ -193,32 +199,71 @@ function latestEventSegment(raw: string): string {
   return segments.length ? segments[segments.length - 1] : raw;
 }
 
-export function deriveParcelAction(parcelStatusRaw: string, status: OrderStatus): ParcelActionInfo {
+export function deriveParcelAction(
+  parcelStatusRaw: string,
+  status: OrderStatus,
+  trackingNo = ""
+): ParcelActionInfo {
   // Resolved/cancelled parcels keep action null so historical "failed" or
   // "out for delivery" events never resurface as work to do.
-  if (!parcelStatusRaw || status === "COLLECTED" || status === "RETURN" || status === "BATAL") {
+  if (status === "COLLECTED" || status === "RETURN" || status === "BATAL") {
     return { action: null, location: "", attempts: 0 };
   }
 
-  const latest = latestEventSegment(parcelStatusRaw);
+  const raw = (parcelStatusRaw || "").trim();
+  const hasScan = raw !== "" && raw !== "-" && raw !== "—";
+
+  // Pending with no courier scan yet: split by whether tracking exists.
+  if (!hasScan) {
+    if (status !== "PENDING") return { action: null, location: "", attempts: 0 };
+    const tn = (trackingNo || "").trim();
+    const hasTracking = tn !== "" && tn !== "-" && tn.toUpperCase() !== "BATAL";
+    return { action: hasTracking ? "NO_SCAN" : "NOT_SHIPPED", location: "", attempts: 0 };
+  }
+
+  const latest = latestEventSegment(raw);
   // One scan event can carry two failure phrases ("Delivery Failed. Recipient
   // not available"), so attempts are counted per event, not per phrase match.
-  const attempts = parcelStatusRaw
+  const attempts = raw
     .split(/\(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}\)/)
     .filter((seg) => FAILED_DELIVERY_RE.test(seg)).length;
 
-  let action: ParcelAction | null = null;
+  let action: ParcelAction;
   if (SELF_COLLECT_RE.test(latest)) action = "SELF_COLLECT";
   else if (FAILED_DELIVERY_RE.test(latest)) action = "FAILED_DELIVERY";
+  else if (EXCEPTION_RE.test(latest)) action = "EXCEPTION";
   else if (OUT_FOR_DELIVERY_RE.test(latest)) action = "OUT_FOR_DELIVERY";
+  // Anything else that is still pending is moving through the network.
+  // STUCK is decided later in analytics, where "today" is known.
+  else action = "IN_TRANSIT";
+
+  // A non-pending, non-resolved row (UNKNOWN status) only shows up when the
+  // scan itself demands action, never as plain in-transit noise.
+  if (status !== "PENDING" && (action === "IN_TRANSIT" || action === "OUT_FOR_DELIVERY")) {
+    return { action: null, location: "", attempts };
+  }
 
   let location = "";
   if (action === "SELF_COLLECT") {
     const m = latest.match(COLLECT_AT_RE);
     if (m) location = m[1].replace(/\s+/g, " ").trim();
     if (!location) location = deriveRegion(latest);
-    if (!location || location === "Tidak Diketahui") location = deriveRegion(parcelStatusRaw);
+    if (!location || location === "Tidak Diketahui") location = deriveRegion(raw);
     if (location === "Tidak Diketahui") location = "";
+  } else {
+    const r = deriveRegion(latest);
+    if (r !== "Tidak Diketahui") location = r;
+    else {
+      // e.g. "In Linehaul CW Transport Management Sibu ( )" → "CW Transport Management Sibu"
+      location = latest
+        .replace(/\(\s*\)/g, "")
+        .replace(
+          /^(?:Arrival Exception|In Linehaul|Shipment Received At Hub|Shipment Received At|Trip Dispatching\.?|Pickup Success\.?|Successful Pickup|Out For Delivery|On Vehicle for Delivery|Window Delivery Assigned|Delivery Fail(?:ed)?\.?)\s*/i,
+          ""
+        )
+        .replace(/\s+/g, " ")
+        .trim();
+    }
   }
 
   return { action, location, attempts };
@@ -434,7 +479,7 @@ export function parseWorkbook(fileBuffer: ArrayBuffer, fileName: string): Parsed
         const settleGap = daysBetween(courierGenerated, lastScanDate);
         const isResolved = status === "COLLECTED" || status === "RETURN";
         const shipType = deriveShipType(deliveryMethod);
-        const actionInfo = deriveParcelAction(parcelStatusRaw, status);
+        const actionInfo = deriveParcelAction(parcelStatusRaw, status, trackingNo);
 
         orders.push({
           agent: cleanAgentName(pick(fullRow, colMap.agent)),
@@ -503,7 +548,7 @@ export function parseWorkbook(fileBuffer: ArrayBuffer, fileName: string): Parsed
       const lastScanDate = deriveLastScanDate(parcelStatusRaw);
       const settleGap = daysBetween(courierGenerated, lastScanDate);
       const isResolved = status === "COLLECTED" || status === "RETURN";
-      const actionInfo = deriveParcelAction(parcelStatusRaw, status);
+      const actionInfo = deriveParcelAction(parcelStatusRaw, status, trackingNo);
 
       orders.push({
         agent,

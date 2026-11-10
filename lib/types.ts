@@ -7,7 +7,27 @@ export type OrderStatus = "COLLECTED" | "RETURN" | "PENDING" | "BATAL" | "UNKNOW
  * - FAILED_DELIVERY — last delivery attempt failed (customer must be contacted)
  * - OUT_FOR_DELIVERY — parcel is on the vehicle today
  */
-export type ParcelAction = "SELF_COLLECT" | "FAILED_DELIVERY" | "OUT_FOR_DELIVERY";
+/**
+ * Every PENDING parcel lands in exactly one of these, read from its latest
+ * courier scan. Order here = admin priority.
+ *  - SELF_COLLECT     waiting at an office/locker for the customer to collect
+ *  - FAILED_DELIVERY  latest delivery attempt failed
+ *  - EXCEPTION        courier flagged a problem (Arrival Exception, on hold, address issue)
+ *  - STUCK            in transit but no new scan for STUCK_DAYS+ days
+ *  - NO_SCAN          tracking generated but the courier has never scanned it
+ *  - NOT_SHIPPED      no tracking number yet
+ *  - OUT_FOR_DELIVERY on the vehicle / delivery window assigned
+ *  - IN_TRANSIT       moving normally (linehaul, hub, dispatch, pickup)
+ */
+export type ParcelAction =
+  | "SELF_COLLECT"
+  | "FAILED_DELIVERY"
+  | "EXCEPTION"
+  | "STUCK"
+  | "NO_SCAN"
+  | "NOT_SHIPPED"
+  | "OUT_FOR_DELIVERY"
+  | "IN_TRANSIT";
 
 export interface Order {
   agent: string;
@@ -183,15 +203,29 @@ export interface ActionParcel {
   failAttempts: number;
   lastEventLabel: string;
   lastScanLabel: string;
-  daysSince: number | null; // days since the latest scan (vs today)
+  /** Days since the latest scan; for unscanned parcels, since tracking was
+   *  generated; for parcels without tracking, since the order date. */
+  daysSince: number | null;
+  /** Unscanned/unshipped parcel past the follow-up threshold. */
+  overdue: boolean;
 }
 
 export interface ParcelActionBoard {
   selfCollect: ActionParcel[];
   failedDelivery: ActionParcel[];
+  exception: ActionParcel[];
+  stuck: ActionParcel[];
+  noScan: ActionParcel[];
+  notShipped: ActionParcel[];
   outForDelivery: ActionParcel[];
-  /** Parcels the admin must act on today: self-collect + failed delivery. */
+  inTransit: ActionParcel[];
+  /** Every pending parcel on the board (all groups). */
+  totalPending: number;
+  /** Parcels the admin must act on today (everything except out-for-delivery
+   *  and normal in-transit; unscanned/unshipped only once overdue). */
   totalActionable: number;
+  /** In-transit parcels count as stuck after this many days without a scan. */
+  stuckDays: number;
 }
 
 export interface RiskParcel {
