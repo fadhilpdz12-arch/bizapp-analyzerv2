@@ -1,5 +1,14 @@
 export type OrderStatus = "COLLECTED" | "RETURN" | "PENDING" | "BATAL" | "UNKNOWN";
 
+/**
+ * Current actionable state of an unresolved parcel, read from the LATEST
+ * courier scan event inside parcelStatusRaw:
+ * - SELF_COLLECT    — parcel waiting at an office/hub/locker for the customer
+ * - FAILED_DELIVERY — last delivery attempt failed (customer must be contacted)
+ * - OUT_FOR_DELIVERY — parcel is on the vehicle today
+ */
+export type ParcelAction = "SELF_COLLECT" | "FAILED_DELIVERY" | "OUT_FOR_DELIVERY";
+
 export interface Order {
   agent: string;
   customerName: string;
@@ -25,6 +34,9 @@ export interface Order {
   lastScanDate: Date | null; // final timestamp inside parcelStatusRaw
   daysToSettle: number | null; // courierGenerated -> lastScanDate, for resolved parcels
   daysInTransit: number | null; // courierGenerated -> lastScanDate, for still-pending parcels
+  parcelAction: ParcelAction | null; // actionable state from the latest scan, null when resolved/none
+  actionLocation: string; // office/hub where the parcel waits for self-collect, "" otherwise
+  failAttempts: number; // failed delivery attempts counted across the whole scan history
 }
 
 export interface ParsedResult {
@@ -157,6 +169,31 @@ export interface ShipTypeStat {
   lostToReturn: number;
 }
 
+export interface ActionParcel {
+  action: ParcelAction;
+  trackingNo: string;
+  customerName: string;
+  phone: string;
+  agent: string;
+  product: string;
+  amount: number;
+  courierProvider: string;
+  /** Self-collect: office/hub/locker where the parcel waits. Otherwise region. */
+  location: string;
+  failAttempts: number;
+  lastEventLabel: string;
+  lastScanLabel: string;
+  daysSince: number | null; // days since the latest scan (vs today)
+}
+
+export interface ParcelActionBoard {
+  selfCollect: ActionParcel[];
+  failedDelivery: ActionParcel[];
+  outForDelivery: ActionParcel[];
+  /** Parcels the admin must act on today: self-collect + failed delivery. */
+  totalActionable: number;
+}
+
 export interface RiskParcel {
   trackingNo: string;
   customerName: string;
@@ -257,6 +294,7 @@ export interface Analytics {
   shipTypes: ShipTypeStat[];
   riskParcels: RiskParcel[];
   riskThresholdDays: number;
+  parcelActions: ParcelActionBoard;
   monthMaturity: MonthMaturity[];
   moneyLost: MoneyLost;
   customers: CustomerInsight;

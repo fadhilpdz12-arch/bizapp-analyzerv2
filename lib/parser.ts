@@ -1,5 +1,5 @@
 import * as XLSX from "xlsx";
-import { Order, OrderStatus, ParsedResult } from "./types";
+import { Order, OrderStatus, ParcelAction, ParsedResult } from "./types";
 
 const STATUS_TOKENS: OrderStatus[] = ["COLLECTED", "RETURN", "PENDING", "BATAL"];
 
@@ -156,6 +156,72 @@ function deriveRegion(parcelStatusRaw: string): string {
       .trim();
   }
   return "Tidak Diketahui";
+}
+
+// ─── Parcel action detection ────────────────────────────────────────────────
+// parcelStatusRaw is a chronological list of scan events, each closed by a
+// "(YYYY-MM-DD HH:MM:SS)" stamp — the LAST event is the parcel's current
+// state, so the action is read from that segment only. History still feeds
+// the failed-attempt counter.
+
+const SELF_COLLECT_RE =
+  /self[\s-]*collect|collection\s*point|ready\s+(?:for|to)\s+(?:self\s*)?collect|awaiting\s+collection|pick\s*up\s*point|counter\s+(?:pick\s*up|collection)|sila\s+(?:kutip|tuntut|ambil)|kutip\s+sendiri|kutip\s+di|ambil\s+di|tuntut\s+di|\bPUDO\b|parcel\s+locker|ezbox|pos\s+mini|missed\s+delivery\s+card/i;
+
+const FAILED_DELIVERY_RE =
+  /delivery\s+fail(?:ed)?\b|failed\s+delivery|unsuccessful\s+deliver|attempt(?:ed)?\s+(?:delivery\s+)?fail|gagal\s+(?:di)?hantar|penghantaran\s+(?:tidak\s+berjaya|gagal)|recipient\s+not\s+available|penerima\s+tiada|no\s+one\s+at\s+home|recipient\s+refus|rescheduled\s+delivery/i;
+
+const OUT_FOR_DELIVERY_RE =
+  /out\s+for\s+delivery|with\s+delivery\s+courier|on\s+vehicle\s+for\s+delivery|window\s+delivery\s+assigned|sedang\s+dihantar|keluar\s+untuk\s+penghantaran/i;
+
+// Location inside self-collect prose, e.g. "Sila kutip di Pejabat Pos Presint 9"
+// or "Ready for collection at DP Kajang".
+const COLLECT_AT_RE =
+  /(?:collect(?:ion)?(?:\s+point)?\s+(?:at|@)|ready\s+(?:for|to)\s+collect(?:ion)?\s+at|sila\s+(?:kutip|tuntut|ambil)\s+di|kutip\s+di|ambil\s+di|tuntut\s+di)\s*[:\-]?\s*([^(.,;]{3,60})/i;
+
+export interface ParcelActionInfo {
+  action: ParcelAction | null;
+  location: string;
+  attempts: number;
+}
+
+function latestEventSegment(raw: string): string {
+  if (!raw) return "";
+  const segments = raw
+    .split(/\(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}\)/)
+    .map((s) => s.trim())
+    .filter(Boolean);
+  return segments.length ? segments[segments.length - 1] : raw;
+}
+
+export function deriveParcelAction(parcelStatusRaw: string, status: OrderStatus): ParcelActionInfo {
+  // Resolved/cancelled parcels keep action null so historical "failed" or
+  // "out for delivery" events never resurface as work to do.
+  if (!parcelStatusRaw || status === "COLLECTED" || status === "RETURN" || status === "BATAL") {
+    return { action: null, location: "", attempts: 0 };
+  }
+
+  const latest = latestEventSegment(parcelStatusRaw);
+  // One scan event can carry two failure phrases ("Delivery Failed. Recipient
+  // not available"), so attempts are counted per event, not per phrase match.
+  const attempts = parcelStatusRaw
+    .split(/\(\d{4}-\d{2}-\d{2}\s+\d{1,2}:\d{2}:\d{2}\)/)
+    .filter((seg) => FAILED_DELIVERY_RE.test(seg)).length;
+
+  let action: ParcelAction | null = null;
+  if (SELF_COLLECT_RE.test(latest)) action = "SELF_COLLECT";
+  else if (FAILED_DELIVERY_RE.test(latest)) action = "FAILED_DELIVERY";
+  else if (OUT_FOR_DELIVERY_RE.test(latest)) action = "OUT_FOR_DELIVERY";
+
+  let location = "";
+  if (action === "SELF_COLLECT") {
+    const m = latest.match(COLLECT_AT_RE);
+    if (m) location = m[1].replace(/\s+/g, " ").trim();
+    if (!location) location = deriveRegion(latest);
+    if (!location || location === "Tidak Diketahui") location = deriveRegion(parcelStatusRaw);
+    if (location === "Tidak Diketahui") location = "";
+  }
+
+  return { action, location, attempts };
 }
 
 const MALAY_MONTHS = [
@@ -368,6 +434,7 @@ export function parseWorkbook(fileBuffer: ArrayBuffer, fileName: string): Parsed
         const settleGap = daysBetween(courierGenerated, lastScanDate);
         const isResolved = status === "COLLECTED" || status === "RETURN";
         const shipType = deriveShipType(deliveryMethod);
+        const actionInfo = deriveParcelAction(parcelStatusRaw, status);
 
         orders.push({
           agent: cleanAgentName(pick(fullRow, colMap.agent)),
@@ -395,6 +462,9 @@ export function parseWorkbook(fileBuffer: ArrayBuffer, fileName: string): Parsed
           lastScanDate,
           daysToSettle: isResolved ? settleGap : null,
           daysInTransit: status === "PENDING" ? settleGap : null,
+          parcelAction: actionInfo.action,
+          actionLocation: actionInfo.location,
+          failAttempts: actionInfo.attempts,
         });
         continue;
       }
@@ -433,6 +503,7 @@ export function parseWorkbook(fileBuffer: ArrayBuffer, fileName: string): Parsed
       const lastScanDate = deriveLastScanDate(parcelStatusRaw);
       const settleGap = daysBetween(courierGenerated, lastScanDate);
       const isResolved = status === "COLLECTED" || status === "RETURN";
+      const actionInfo = deriveParcelAction(parcelStatusRaw, status);
 
       orders.push({
         agent,
@@ -459,6 +530,9 @@ export function parseWorkbook(fileBuffer: ArrayBuffer, fileName: string): Parsed
         lastScanDate,
         daysToSettle: isResolved ? settleGap : null,
         daysInTransit: status === "PENDING" ? settleGap : null,
+        parcelAction: actionInfo.action,
+        actionLocation: actionInfo.location,
+        failAttempts: actionInfo.attempts,
       });
     }
   }

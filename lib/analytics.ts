@@ -16,6 +16,8 @@ import {
   MonthComparisonRow,
   ShipTypeStat,
   RiskParcel,
+  ActionParcel,
+  ParcelActionBoard,
   MonthMaturity,
   MoneyLost,
   LossBucket,
@@ -401,6 +403,54 @@ export function computeAnalytics(allOrders: Order[]): Analytics {
     })
     .sort((a, b) => b.daysStalled - a.daysStalled);
 
+  // ═══════════ PARCEL ACTION BOARD (self collect / failed / out for delivery) ═══════════
+  // Read from each parcel's LATEST courier scan (set in the parser). These are
+  // today's operational to-dos, distinct from the stalled-parcel risk list.
+  const today = new Date();
+  const daysSinceScan = (d: Date | null): number | null => {
+    if (!d) return null;
+    const diff = Math.floor((today.getTime() - d.getTime()) / 86400000);
+    return diff >= 0 && diff <= 365 ? diff : null;
+  };
+  const mkActionParcel = (o: Order): ActionParcel => ({
+    action: o.parcelAction as ActionParcel["action"],
+    trackingNo: o.trackingNo,
+    customerName: o.customerName,
+    phone: o.phone,
+    agent: o.agent,
+    product: o.product,
+    amount: o.amount,
+    courierProvider: o.courierProvider,
+    location: o.actionLocation || (o.region !== "Tidak Diketahui" ? o.region : ""),
+    failAttempts: o.failAttempts,
+    lastEventLabel: o.failReason || "—",
+    lastScanLabel: fmtShort(o.lastScanDate),
+    daysSince: daysSinceScan(o.lastScanDate),
+  });
+
+  const selfCollect = orders
+    .filter((o) => o.parcelAction === "SELF_COLLECT")
+    .map(mkActionParcel)
+    // Longest-waiting first — these auto-return after a few days uncollected.
+    .sort((a, b) => (b.daysSince ?? 0) - (a.daysSince ?? 0));
+  const failedDelivery = orders
+    .filter((o) => o.parcelAction === "FAILED_DELIVERY")
+    .map(mkActionParcel)
+    // Most attempts first — the next failure usually triggers RTO.
+    .sort((a, b) => b.failAttempts - a.failAttempts || (b.daysSince ?? 0) - (a.daysSince ?? 0));
+  const outForDelivery = orders
+    .filter((o) => o.parcelAction === "OUT_FOR_DELIVERY")
+    .map(mkActionParcel)
+    // Freshest scan first — these should be moving today.
+    .sort((a, b) => (a.daysSince ?? 0) - (b.daysSince ?? 0));
+
+  const parcelActions: ParcelActionBoard = {
+    selfCollect,
+    failedDelivery,
+    outForDelivery,
+    totalActionable: selfCollect.length + failedDelivery.length,
+  };
+
   // ═══════════ MONTH MATURITY (guards against misleading MoM) ═══════════
   const monthMaturity: MonthMaturity[] = Array.from(monthGroups.entries())
     .sort((a, b) => a[0].localeCompare(b[0]))
@@ -542,6 +592,21 @@ export function computeAnalytics(allOrders: Order[]): Analytics {
       tone: "amaran",
     });
   }
+  if (parcelActions.selfCollect.length > 0) {
+    const val = Math.round(parcelActions.selfCollect.reduce((s2, p2) => s2 + p2.amount, 0));
+    summary.push({
+      headline: `${parcelActions.selfCollect.length} parcel menunggu customer kutip sendiri`,
+      detail: `Nilai RM${val.toLocaleString()}. Parcel yang tak dikutip dalam beberapa hari akan auto-return — WhatsApp customer dengan lokasi kutipan di tab Tindakan Parcel.`,
+      tone: "amaran",
+    });
+  }
+  if (parcelActions.failedDelivery.length > 0) {
+    summary.push({
+      headline: `${parcelActions.failedDelivery.length} parcel gagal dihantar (failed delivery)`,
+      detail: `Kurier dah cuba hantar tapi tak berjaya. Sahkan alamat & pastikan ada orang di rumah sebelum percubaan seterusnya gagal dan parcel dipulangkan.`,
+      tone: "bahaya",
+    });
+  }
   const immature = monthMaturity.filter((m) => !m.isMature);
   if (immature.length > 0) {
     summary.push({
@@ -597,6 +662,7 @@ export function computeAnalytics(allOrders: Order[]): Analytics {
     shipTypes,
     riskParcels,
     riskThresholdDays,
+    parcelActions,
     monthMaturity,
     moneyLost,
     customers,

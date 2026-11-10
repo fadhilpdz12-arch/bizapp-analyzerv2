@@ -14,6 +14,7 @@ import MonthComparisonPanel from "./MonthComparisonPanel";
 import ExecutiveSummary from "./ExecutiveSummary";
 import ShippingComparePanel from "./ShippingComparePanel";
 import RiskParcelPanel from "./RiskParcelPanel";
+import ParcelActionPanel from "./ParcelActionPanel";
 import SelamatkanSummaryPanel from "./SelamatkanSummaryPanel";
 import MoneyLostPanel from "./MoneyLostPanel";
 import CustomerPanel from "./CustomerPanel";
@@ -88,6 +89,7 @@ export default function Dashboard({
     return [
       { id: "ringkasan", label: "Ringkasan", icon: "\u{1F4CA}" },
       { id: "selamatkan", label: "Selamatkan", icon: "\u{1F6A8}", badge: risky + returned, badgeTone: "alert" },
+      { id: "parcel", label: "Tindakan Parcel", icon: "\u{1F4CD}", badge: a.parcelActions?.totalActionable ?? 0, badgeTone: "alert" },
       { id: "panggil", label: "Panggilan Hari Ini", icon: "\u{1F4DE}" },
       { id: "bulanan", label: "Bulanan", icon: "\u{1F4C5}", badge: a.monthlyRecaps.length, badgeTone: "neutral" },
       { id: "produk", label: "Produk & Kurier", icon: "\u{1F4E6}" },
@@ -485,6 +487,21 @@ export default function Dashboard({
             <AgentQualityPanel rows={a.agentQuality} />
             <ManifestTable agents={a.agents} />
           </section>
+          </div>
+        )}
+
+        {tab === "parcel" && (
+          <div className="space-y-6 sm:space-y-8">
+            <section>
+              <p className="font-display font-bold text-lg sm:text-xl text-content-100 mb-1">
+                Tindakan Parcel Hari Ini
+              </p>
+              <p className="text-content-300/70 text-[13px] mb-4">
+                Dibaca terus dari scan kurier terkini: parcel yang menunggu kutipan sendiri
+                (dengan lokasi), gagal dihantar, dan yang sedang dalam penghantaran.
+              </p>
+              <ParcelActionPanel board={a.parcelActions} />
+            </section>
           </div>
         )}
 
