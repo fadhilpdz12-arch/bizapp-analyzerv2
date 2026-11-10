@@ -165,13 +165,15 @@ function deriveRegion(parcelStatusRaw: string): string {
 // the failed-attempt counter.
 
 const SELF_COLLECT_RE =
-  /self[\s-]*collect|collection\s*point|ready\s+(?:for|to)\s+(?:self\s*)?collect|awaiting\s+collection|pick\s*up\s*point|counter\s+(?:pick\s*up|collection)|sila\s+(?:kutip|tuntut|ambil)|kutip\s+sendiri|kutip\s+di|ambil\s+di|tuntut\s+di|\bPUDO\b|parcel\s+locker|ezbox|pos\s+mini|missed\s+delivery\s+card/i;
+  // Pos Laju "Window Delivery Assigned <office>" = parcel sits at that office
+  // counter waiting for the customer to collect it.
+  /window\s+delivery\s+assigned|self[\s-]*collect|collection\s*point|ready\s+(?:for|to)\s+(?:self\s*)?collect|awaiting\s+collection|pick\s*up\s*point|counter\s+(?:pick\s*up|collection)|sila\s+(?:kutip|tuntut|ambil)|kutip\s+sendiri|kutip\s+di|ambil\s+di|tuntut\s+di|\bPUDO\b|parcel\s+locker|ezbox|pos\s+mini|missed\s+delivery\s+card/i;
 
 const FAILED_DELIVERY_RE =
   /delivery\s+fail(?:ed)?\b|failed\s+delivery|unsuccessful\s+deliver|attempt(?:ed)?\s+(?:delivery\s+)?fail|gagal\s+(?:di)?hantar|penghantaran\s+(?:tidak\s+berjaya|gagal)|recipient\s+not\s+available|penerima\s+tiada|no\s+one\s+at\s+home|recipient\s+refus|rescheduled\s+delivery/i;
 
 const OUT_FOR_DELIVERY_RE =
-  /out\s+for\s+delivery|with\s+delivery\s+courier|on\s+vehicle\s+for\s+delivery|window\s+delivery\s+assigned|sedang\s+dihantar|keluar\s+untuk\s+penghantaran/i;
+  /out\s+for\s+delivery|with\s+delivery\s+courier|on\s+vehicle\s+for\s+delivery|sedang\s+dihantar|keluar\s+untuk\s+penghantaran/i;
 
 // Courier-flagged problems. Pos Laju "Arrival Exception" means the parcel hit
 // a snag at that office (wrong/incomplete address, damaged, held) — it will
